@@ -1,0 +1,105 @@
+name: Build PS4 install packages
+
+# Kept separate from upstream source to minimize merge conflicts.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/ps4-build.yml"
+      - "src/**"
+      - "tools/**"
+      - "assets/**"
+      - "sce_sys/**"
+      - "Makefile"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: PS4 PKG build and verification
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    env:
+      OO_PS4_TOOLCHAIN: ${{ github.workspace }}/.toolchain/OpenOrbis/PS4Toolchain
+      DOTNET_ROLL_FORWARD: Major
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+
+    steps:
+      - name: Checkout fork without modifying upstream source
+        uses: actions/checkout@v4
+
+      - name: Install macOS build prerequisites
+        run: |
+          set -euo pipefail
+          brew install llvm lld icu4c
+          echo "LLVM_BIN=$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
+          echo "LLD_BIN=$(brew --prefix lld)/bin" >> "$GITHUB_ENV"
+
+      - name: Prepare .NET runtime for LibOrbisPkg
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Python packaging dependency
+        run: |
+          python3 -m pip install --user Pillow
+
+      - name: Download pinned OpenOrbis SDK
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.toolchain"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/openorbis.tar.gz" \
+            "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.4/toolchain-llvm-18.tar.gz"
+          echo "3c7cd5bb593ca74fa1c13fd59f3938dc0fc07985167f7275063019e63abe4526  $RUNNER_TEMP/openorbis.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/openorbis.tar.gz" -C "$GITHUB_WORKSPACE/.toolchain"
+          test -f "$OO_PS4_TOOLCHAIN/link.x"
+          test -f "$OO_PS4_TOOLCHAIN/bin/macos/PkgTool.Core"
+          chmod +x "$OO_PS4_TOOLCHAIN/bin/macos/"* || true
+
+      - name: Restore upstream build-time assets
+        run: |
+          set -euo pipefail
+          mkdir -p sce_module assets/covers assets/service/sce_module
+          cp "$OO_PS4_TOOLCHAIN/bin/data/modules/libc.prx" sce_module/
+          cp "$OO_PS4_TOOLCHAIN/bin/data/modules/libSceFios2.prx" sce_module/
+          curl --fail --location --retry 3 --output assets/service/compat-jb.prx \
+            "https://raw.githubusercontent.com/LightningMods/Itemzflow/e71c284c61db3fce53936178db30dd38be7ba47b/App-Media-Assets/Media/jb.prx"
+          test -s assets/service/compat-jb.prx
+          cat > assets/service/COMPAT-PROVENANCE.txt <<'EOF'
+          Itemzflow jb.prx compatibility helper
+          Source revision: e71c284c61db3fce53936178db30dd38be7ba47b
+          Source path: App-Media-Assets/Media/jb.prx
+          Repository: https://github.com/LightningMods/Itemzflow
+          License: GPL-3.0; see ITEMZFLOW-LICENSE.txt
+          EOF
+
+      - name: Build both installable PS4 packages
+        run: |
+          set -euo pipefail
+          make -j2 all service-package \
+            OO_PS4_TOOLCHAIN="$OO_PS4_TOOLCHAIN" \
+            LLVM="$LLVM_BIN" \
+            LD="$LLD_BIN/ld.lld"
+
+      - name: Validate package contents
+        run: |
+          set -euo pipefail
+          PKGTOOL="$OO_PS4_TOOLCHAIN/bin/macos/PkgTool.Core"
+          make validate OO_PS4_TOOLCHAIN="$OO_PS4_TOOLCHAIN" LLVM="$LLVM_BIN" LD="$LLD_BIN/ld.lld"
+          "$PKGTOOL" pkg_validate build/IV0000-NULL00002_00-NULLSTORSERVICE0.pkg
+          python3 tools/verify_package.py build/IV0000-NULL00002_00-NULLSTORSERVICE0.pkg --tool "$PKGTOOL"
+          shasum -a 256 build/*.pkg | tee build/SHA256SUMS.txt
+
+      - name: Upload PS4 installation packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NULL-store-PS4-installable-packages
+          path: |
+            build/*.pkg
+            build/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 30
