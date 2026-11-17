@@ -66,8 +66,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p sce_module assets/covers assets/service/sce_module
-          cp "$OO_PS4_TOOLCHAIN/bin/data/modules/libc.prx" sce_module/
-          cp "$OO_PS4_TOOLCHAIN/bin/data/modules/libSceFios2.prx" sce_module/
+          # OpenOrbis publishes these runtime PRXs with its Piglet sample,
+          # not under bin/data/modules in the release archive.
+          for module in libc.prx libSceFios2.prx; do
+            curl --fail --location --retry 3 --output "sce_module/$module" \
+              "https://raw.githubusercontent.com/OpenOrbis/OpenOrbis-PS4-Toolchain/v0.5.4/samples/piglet/sce_module/$module"
+            test -s "sce_module/$module"
+          done
           curl --fail --location --retry 3 --output assets/service/compat-jb.prx \
             "https://raw.githubusercontent.com/LightningMods/Itemzflow/e71c284c61db3fce53936178db30dd38be7ba47b/App-Media-Assets/Media/jb.prx"
           test -s assets/service/compat-jb.prx
