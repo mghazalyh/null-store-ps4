@@ -87,7 +87,10 @@ jobs:
       - name: Build both installable PS4 packages
         run: |
           set -euo pipefail
-          make -j2 all service-package \
+          # Upstream Makefile assumes build/ already exists for some object targets.
+          mkdir -p build
+          # Serialize shared generated-asset targets to prevent overlapping writes.
+          make -j1 all service-package \
             OO_PS4_TOOLCHAIN="$OO_PS4_TOOLCHAIN" \
             LLVM="$LLVM_BIN" \
             LD="$LLD_BIN/ld.lld"
