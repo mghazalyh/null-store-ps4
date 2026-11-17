@@ -45,7 +45,10 @@ jobs:
 
       - name: Install Python packaging dependency
         run: |
-          python3 -m pip install --user Pillow
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/ps4-venv"
+          "$RUNNER_TEMP/ps4-venv/bin/python" -m pip install Pillow
+          echo "$RUNNER_TEMP/ps4-venv/bin" >> "$GITHUB_PATH"
 
       - name: Download pinned OpenOrbis SDK
         run: |
